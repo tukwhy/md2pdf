@@ -1,0 +1,24 @@
+﻿% ==========================================
+% Pandoc PDF 增强排版模板 (LaTeX Header)
+% ==========================================
+
+% 1. 代码块长行自动折行支持
+\usepackage{fvextra}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,breakanywhere=true,commandchars=\\\{\}}
+
+% 2. 图片浮动控制（尽量就地显示，不乱跑）
+\usepackage{float}
+\makeatletter
+\def\fps@figure{H}
+\makeatother
+
+% 3. 段落间距与首行微调
+\setlength{\parskip}{0.45em}
+
+% 4. 表格美化增强
+\usepackage{booktabs}
+\usepackage{array}
+
+% 5. 解决部分特殊数学符号与宏包兼容
+\usepackage{amsmath}
+\usepackage{amssymb}
