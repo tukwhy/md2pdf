@@ -1,0 +1,10 @@
+.vscode/**
+.vscode-test/**
+src/**
+tsconfig.json
+.gitignore
+*.bat
+md2pdf.py
+examples/**
+*.vsix
+node_modules/**

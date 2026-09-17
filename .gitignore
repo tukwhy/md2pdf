@@ -1,7 +1,12 @@
-﻿# Byte-compiled / optimized / DLL files
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *.class
+
+# Node & Extension build outputs
+node_modules/
+out/
+*.vsix
 
 # LaTeX auxiliary files
 *.aux

@@ -1,100 +1,123 @@
-﻿# md2pdf - Markdown 转 PDF 一键渲染工具
+# md2pdf - Markdown 转 PDF 工具与 VS Code 插件
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python: 3.7+](https://img.shields.io/badge/Python-3.7+-green.svg)](https://www.python.org/)
+[![VS Code Extension](https://img.shields.io/badge/VS%20Code-Extension-007ACC.svg)](https://marketplace.visualstudio.com/)
 [![Pandoc](https://img.shields.io/badge/Pandoc-3.0+-orange.svg)](https://pandoc.org/)
 [![Engine: XeLaTeX](https://img.shields.io/badge/Engine-XeLaTeX-red.svg)](https://tug.org/texlive/)
 
-专为中文技术报告、论文、学习笔记打造的 **Markdown 转高质量 PDF 一键渲染工具**。
+专为中文技术报告、论文、学习笔记打造的 **Markdown 转出版级 PDF 工具与 VS Code 扩展插件**。
 
-基于 **Pandoc + XeLaTeX + ctexart** 构建，解决原生 Pandoc 导出 PDF 时的 **中文不显示/乱码**、**复杂 LaTeX 公式排版**、**相对路径图片嵌入**、**长代码截断** 等问题。
+底层基于 **Pandoc + XeLaTeX + ctexart** 构建，彻底解决 Markdown 导出 PDF 时的 **中文不显示/乱码**、**复杂 LaTeX 公式错位**、**相对路径图片丢失**、**代码长行超出页面截断** 等问题。
 
 ---
 
 ## 🌟 核心特性
 
-- 🀄 **出版级中文排版**：内置 `ctexart` 宏包，标题分级、段落行距、中文标点避头尾、中英文间距均符合专业排版规范。
-- 📐 **LaTeX 公式完整支持**：原生支持行内公式 `$E=mc^2$` 与多行矩阵公式 `$$ \begin{aligned}...\end{aligned} $$`。
-- 🖼️ **图片相对路径解析**：自动绑定资源路径（`--resource-path`），引用同级或子文件夹中的图片均能精确定位，强制就地排版（防止图片漂移）。
-- 💻 **长代码自动折行**：引入 `fvextra` 宏包，超长代码自动折行，绝不溢出页面边界；默认搭配 `Consolas` 等宽字体与语法高亮。
-- ⚡ **零额外依赖**：纯 Python 标准库编写，无需执行 `pip install` 安装第三方包。
+- 🧩 **VS Code 原生插件**：支持直接在 VS Code 中安装使用，提供编辑器右上角快捷图标、右键菜单、命令面板与状态栏一键导出。
+- 👁️ **双模预览渲染功能**：
+  - **⚡ 即时渲染预览**：分屏实时渲染 Markdown、KaTeX LaTeX 数学公式、相对路径图片与代码块，输入即反馈；
+  - **📄 真机 PDF 视图**：在分屏中一键调用后台 XeLaTeX 进行真实渲染并即时展示编译后的排版。
+- ⚙️ **丰富的图形化配置项**：在 VS Code 设置界面中直观修改中文字体、代码字体、边距、语法高亮配色主题、目录等。
+- 🀄 **出版级中文排版**：内置 `ctexart` 权威中文宏包，标题分级、段落行距、中文标点避头尾、中英文间距均符合专业出版规范。
+- 📐 **LaTeX 公式完美支持**：支持行内公式 `$E=mc^2$` 与多行矩阵公式 `$$ \begin{aligned}...\end{aligned} $$`。
+- 🖼️ **图片相对路径解析**：自动绑定资源路径（`--resource-path`），不管图片在当前目录还是子文件夹均能定位，强制就地排版。
+- 💻 **长代码自动折行**：引入 `fvextra` 宏包，超长代码自动折行，绝不溢出页面边界；搭配 `Consolas` 等宽字体与语法高亮。
+- 🚀 **双轨使用模式**：既可在 VS Code 内部作为插件使用，也可脱离 VS Code 直接使用独立脚本/双击批处理。
 
 ---
 
-## 📋 环境依赖
+## 📋 系统前置环境
 
-在运行本工具前，请确保系统已安装以下 CLI 工具并添加至环境变量：
+在运行本工具（无论是插件还是脚本）前，请确保系统已安装：
 
-1. **[Python](https://www.python.org/downloads/)** (3.7+)
-2. **[Pandoc](https://pandoc.org/installing.html)** (3.0+)
-3. **TeX Live / MacTeX / MiKTeX**（包含 `xelatex` 引擎）
+1. **[Pandoc](https://pandoc.org/installing.html)** (3.0+)
+2. **TeX Live / MacTeX / MiKTeX**（包含 `xelatex` 引擎）
+   - Windows 推荐安装完整的 [TeX Live](https://tug.org/texlive/) 或 [MiKTeX](https://miktex.org/)。
 
-> 💡 验证安装：终端输入 `python --version`、`pandoc --version`、`xelatex --version` 均能正常返回版本号即可。
+> 💡 验证安装：在终端输入 `pandoc --version` 和 `xelatex --version` 能正常返回版本号即可。
 
 ---
 
-## 🚀 使用方法
+## 🔌 VS Code 插件使用指南
 
-### 1. Windows 一键双击（最简）
-直接双击运行 **`一键转PDF.bat`**：
-- 自动扫描转换当前目录下的 Markdown 文件。
-- 渲染完成后自动调用系统默认 PDF 阅读器打开。
+### 1. 安装插件
+可以直接运行打包好的 `.vsix` 文件进行安装：
+```bash
+code --install-extension md2pdf-0.1.0.vsix
+```
+或者在 VS Code 扩展面板（`Ctrl+Shift+X`）中，点击右上角 `...` -> **“从 VSIX 安装...” (Install from VSIX...)**，选择本目录下的 `md2pdf-0.1.0.vsix` 即可完成安装。
 
-### 2. 鼠标拖拽转换
-将任意 `.md` 文件直接**拖拽到 `一键转PDF.bat` 图标上**松开即可。
+### 2. 核心功能入口
+在 VS Code 中打开任意 Markdown 文件：
+1. **编辑器右上角快捷图标**：
+   - ⚡ 点击 `打开分屏渲染预览` 图标，在右侧分屏打开即时渲染与真机对比面板；
+   - 💾 点击 `导出为 PDF` 图标，立即生成 PDF 并弹出提示。
+2. **右键菜单**：
+   - 编辑器内右键或资源管理器中的 `.md` 文件右键，均有 **“MD2PDF: 导出为 PDF”**。
+3. **快捷键与命令面板**：
+   - 按 `Ctrl+Shift+P` 输入 `MD2PDF`，即可选择导出、预览或进入设置。
+4. **状态栏按钮**：
+   - 编辑 Markdown 文档时，VS Code 右下角状态栏会显示 `$(file-pdf) MD2PDF 导出`。
 
-### 3. 命令行调用
+### 3. 在 VS Code 中修改配置
+打开 VS Code 设置（`Ctrl+,`），搜索 `md2pdf`，即可图形化配置：
+- **CJK Font**：中文字体（默认 `Microsoft YaHei`，可选 `SimSun`, `SimHei`, `KaiTi` 等）
+- **Mono Font**：代码等宽字体（默认 `Consolas`）
+- **Margin**：页面边距（默认 `2.2cm`）
+- **Highlight Style**：代码高亮主题（默认 `tango`，可选 `monokai`, `pygments`, `kate` 等）
+- **Toc**：是否在文档最前自动生成目录（默认 `false`）
+- **Custom Header**：自定义 LaTeX 模板路径（默认使用自带的 `template/header.tex`）
+- **Open After Export**：导出完成后是否自动打开 PDF（默认 `true`）
+
+---
+
+## 🖥️ 独立脚本 / 命令行使用
+
+若不启动 VS Code，依然可以使用附带的独立脚本：
+
+### 1. 双击即用
+- Windows 下直接双击 **`一键转PDF.bat`**，自动扫描当前目录 md 并转换。
+- 也可直接将 `.md` 文件拖到 `一键转PDF.bat` 图标上。
+
+### 2. 命令行
 ```bash
 # 转换当前目录下全部 md
 python md2pdf.py
 
 # 转换指定文件
-python md2pdf.py your_document.md
-
-# 自定义输出文件名
 python md2pdf.py your_document.md -o output.pdf
 
-# 自动生成文档目录
+# 生成目录
 python md2pdf.py your_document.md --toc
 ```
 
 ---
 
-## 📦 项目结构
+## 🛠️ 项目源码与开发
 
 ```text
 md2pdf/
-├── .gitignore              # Git 忽略配置
-├── LICENSE                 # MIT 开源协议
-├── README.md               # 项目说明文档
-├── 一键转PDF.bat           # Windows 双击 / 拖拽一键入口
-├── md2pdf.bat              # 命令行快捷脚本（Windows）
-├── md2pdf.py               # 核心转换脚本
-└── template/
-    └── header.tex          # LaTeX 样式与宏包配置文件
+├── src/                    # VS Code 插件 TypeScript 源码
+│   ├── extension.ts        # 插件入口与命令注册
+│   ├── exporter.ts         # 核心 PDF 导出调度逻辑
+│   └── previewPanel.ts     # 分屏渲染预览面板（KaTeX + 实时渲染 + 真机 PDF）
+├── template/
+│   └── header.tex          # LaTeX 宏包与排版配置模板
+├── package.json            # 插件配置与元数据定义
+├── tsconfig.json           # TypeScript 编译配置
+├── md2pdf-0.1.0.vsix       # 打包好的 VS Code 插件离线安装包
+├── 一键转PDF.bat           # Windows 独立双击脚本
+└── md2pdf.py               # 独立 Python 转换脚本
 ```
 
----
+### 编译与重新打包插件
+```bash
+# 编译 TypeScript
+npm run compile
 
-## 💡 关于 Release 说明
-
-- **不需要上传 Release 二进制包**：
-  本工具为轻量级 Python 脚本（零 pip 第三方库），真正的体积依赖是系统级的 Pandoc 与 TeX 环境，无法脱离独立运行。源码分发即是最佳实践。
-- 若需发布版本，直接在 GitHub 上打 `git tag`（如 `v1.0.0`）即可自动生成源码归档。
-
----
-
-## ⚙️ 常用进阶参数
-
-| 参数 | 说明 | 默认值 |
-| :--- | :--- | :--- |
-| `-o, --output` | 指定输出 PDF 路径 | `同名.pdf` |
-| `--font` | 中文字体名称 | `Microsoft YaHei` |
-| `--monofont` | 等宽代码字体 | `Consolas` |
-| `--margin` | 页边距 | `2.2cm` |
-| `--highlight` | 语法高亮配色主题 | `tango` |
-| `--toc` | 在文首自动生成目录 | 关闭 |
-| `--no-open` | 转换完成后不自动打开 PDF | 自动打开 |
+# 打包生成 .vsix 安装包
+npm run package
+```
 
 ---
 
