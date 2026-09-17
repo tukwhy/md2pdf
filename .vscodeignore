@@ -7,4 +7,3 @@ tsconfig.json
 md2pdf.py
 examples/**
 *.vsix
-node_modules/**

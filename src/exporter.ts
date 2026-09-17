@@ -1,4 +1,4 @@
-﻿import * as vscode from 'vscode';
+import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
@@ -31,6 +31,7 @@ const DEFAULT_HEADER = `% ==========================================
 
 export class Exporter {
     private static outputChannel: vscode.OutputChannel | undefined;
+    public static extensionPath: string = '';
 
     public static getOutputChannel(): vscode.OutputChannel {
         if (!this.outputChannel) {
@@ -77,12 +78,13 @@ export class Exporter {
         const openAfterExport = openAfterOverride !== undefined ? openAfterOverride : config.get<boolean>('openAfterExport', true);
 
         // 确定 header.tex 路径
-        let headerPath = this.resolveHeaderPath(parsedPath.dir, customHeader);
+        const headerPath = this.resolveHeaderPath(parsedPath.dir, customHeader);
 
         const channel = this.getOutputChannel();
         channel.appendLine(`\n[${new Date().toLocaleTimeString()}] 开始导出 PDF: ${parsedPath.base} -> ${parsedPath.name}.pdf`);
 
-        const args = [
+        // 构建参数列表（注意：每个命令行选项与值必须是独立的元素，不能用 shell 拼串，防止空格切分问题）
+        const args: string[] = [
             inputPath,
             '-o', outputPath,
             `--pdf-engine=${pdfEngine}`,
@@ -94,7 +96,7 @@ export class Exporter {
             '-V', 'colorlinks=true',
             '-V', 'linkcolor=blue',
             '-V', 'urlcolor=blue',
-            `--highlight-style=${highlightStyle}`
+            `--syntax-highlighting=${highlightStyle}`
         ];
 
         if (headerPath && fs.existsSync(headerPath)) {
@@ -105,7 +107,14 @@ export class Exporter {
             args.push('--toc');
         }
 
-        channel.appendLine(`执行指令: ${pandocPath} ${args.join(' ')}`);
+        channel.appendLine(`执行程序: ${pandocPath}`);
+        channel.appendLine(`参数列表:\n  ${args.join('\n  ')}`);
+
+        // 在 Windows 上，无 shell 运行时若没有 .exe 后缀则补齐
+        let execCmd = pandocPath;
+        if (process.platform === 'win32' && !path.extname(execCmd)) {
+            execCmd = `${execCmd}.exe`;
+        }
 
         return await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
@@ -113,9 +122,10 @@ export class Exporter {
             cancellable: false
         }, async () => {
             return new Promise<string | null>((resolve) => {
-                const proc = spawn(pandocPath, args, {
+                // 使用 shell: false，杜绝 Windows cmd.exe 拆分空格参数（例如 Microsoft YaHei）
+                const proc = spawn(execCmd, args, {
                     cwd: parsedPath.dir,
-                    shell: true
+                    shell: false
                 });
 
                 let stdoutData = '';
@@ -135,7 +145,7 @@ export class Exporter {
 
                 proc.on('error', (err: Error) => {
                     channel.appendLine(`[进程错误]: ${err.message}`);
-                    vscode.window.showErrorMessage(`无法启动 Pandoc: ${err.message}。请确保已安装 Pandoc 并配置好环境变量。`, '查看日志')
+                    vscode.window.showErrorMessage(`无法启动 Pandoc (${execCmd}): ${err.message}。请确保已安装 Pandoc 并配置好环境变量。`, '查看日志')
                         .then(choice => {
                             if (choice === '查看日志') {
                                 channel.show();
@@ -160,7 +170,7 @@ export class Exporter {
                             try {
                                 vscode.env.openExternal(vscode.Uri.file(outputPath));
                             } catch (e) {
-                                // 忽略静默打开失败
+                                // 忽略
                             }
                         }
                         resolve(outputPath);
@@ -168,7 +178,7 @@ export class Exporter {
                         channel.appendLine(`[FAILED] 进程退出码: ${code}`);
                         channel.show();
                         vscode.window.showErrorMessage(
-                            `PDF 渲染失败 (退出码 ${code})。可能是 LaTeX 语法或缺少宏包，请查看输出窗口排查。`,
+                            `PDF 渲染失败 (退出码 ${code})。可能是 LaTeX 语法、缺少宏包或字体问题，请查看输出窗口排查。`,
                             '查看日志'
                         ).then(choice => {
                             if (choice === '查看日志') {
@@ -183,6 +193,7 @@ export class Exporter {
     }
 
     private static resolveHeaderPath(docDir: string, customHeader?: string): string | null {
+        // 1. 用户显式设置
         if (customHeader && customHeader.trim()) {
             const resolved = path.isAbsolute(customHeader) ? customHeader : path.join(docDir, customHeader);
             if (fs.existsSync(resolved)) {
@@ -190,40 +201,41 @@ export class Exporter {
             }
         }
 
-        // 查找 workspace / document 目录下的 template/header.tex 或 header.tex
-        const localCandidates = [
-            path.join(docDir, 'template', 'header.tex'),
-            path.join(docDir, 'header.tex')
-        ];
-
+        // 2. 当前工作区根目录
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (workspaceFolders) {
             for (const folder of workspaceFolders) {
-                localCandidates.push(path.join(folder.uri.fsPath, 'template', 'header.tex'));
-                localCandidates.push(path.join(folder.uri.fsPath, 'header.tex'));
+                const wsTpl = path.join(folder.uri.fsPath, 'template', 'header.tex');
+                if (fs.existsSync(wsTpl)) {
+                    return wsTpl;
+                }
+                const wsHdr = path.join(folder.uri.fsPath, 'header.tex');
+                if (fs.existsSync(wsHdr)) {
+                    return wsHdr;
+                }
             }
         }
 
-        for (const c of localCandidates) {
-            if (fs.existsSync(c)) {
-                return c;
+        // 3. 插件自身安装目录（永远存在官方最新默认模板）
+        if (this.extensionPath) {
+            const extTpl = path.join(this.extensionPath, 'template', 'header.tex');
+            if (fs.existsSync(extTpl)) {
+                return extTpl;
             }
         }
 
-        // 默认自动在 docDir 或 workspace 下生成 template/header.tex
-        const targetDir = workspaceFolders && workspaceFolders.length > 0
-            ? path.join(workspaceFolders[0].uri.fsPath, 'template')
-            : path.join(docDir, 'template');
+        // 4. 当前文档所在目录
+        const docTpl = path.join(docDir, 'template', 'header.tex');
+        if (fs.existsSync(docTpl)) {
+            return docTpl;
+        }
 
-        const fallbackFile = path.join(targetDir, 'header.tex');
+        // 5. 兜底自动生成
+        const fallbackTarget = path.join(docDir, 'template', 'header.tex');
         try {
-            if (!fs.existsSync(targetDir)) {
-                fs.mkdirSync(targetDir, { recursive: true });
-            }
-            if (!fs.existsSync(fallbackFile)) {
-                fs.writeFileSync(fallbackFile, DEFAULT_HEADER, 'utf-8');
-            }
-            return fallbackFile;
+            fs.mkdirSync(path.dirname(fallbackTarget), { recursive: true });
+            fs.writeFileSync(fallbackTarget, DEFAULT_HEADER, 'utf-8');
+            return fallbackTarget;
         } catch (e) {
             return null;
         }

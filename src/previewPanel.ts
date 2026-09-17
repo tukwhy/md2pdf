@@ -1,6 +1,9 @@
-﻿import * as vscode from 'vscode';
+import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+const MarkdownIt = require('markdown-it');
+const markdownItKatex = require('@iktakahiro/markdown-it-katex');
+import hljs from 'highlight.js';
 import { Exporter } from './exporter';
 
 export class PreviewPanel {
@@ -9,8 +12,6 @@ export class PreviewPanel {
     private readonly _extensionUri: vscode.Uri;
     private _documentUri: vscode.Uri;
     private _disposables: vscode.Disposable[] = [];
-    private _currentMode: 'interactive' | 'pdf' = 'interactive';
-    private _lastPdfPath: string | null = null;
 
     public static createOrShow(extensionUri: vscode.Uri, docUri: vscode.Uri) {
         const column = vscode.window.activeTextEditor
@@ -30,6 +31,7 @@ export class PreviewPanel {
             column,
             {
                 enableScripts: true,
+                retainContextWhenHidden: true,
                 localResourceRoots: [
                     extensionUri,
                     vscode.Uri.file(path.dirname(docUri.fsPath)),
@@ -50,24 +52,14 @@ export class PreviewPanel {
 
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
 
-        // 监听 Webview 发来的交互消息
+        // 监听 Webview 消息交互
         this._panel.webview.onDidReceiveMessage(async (message) => {
             switch (message.command) {
+                case 'render':
+                    this.update();
+                    break;
                 case 'exportPdf':
                     await Exporter.exportPdf(this._documentUri, true);
-                    break;
-                case 'compileAndShowPdf':
-                    this._panel.webview.postMessage({ type: 'status', text: '正在编译 PDF...' });
-                    const pdfPath = await Exporter.exportPdf(this._documentUri, false);
-                    if (pdfPath && fs.existsSync(pdfPath)) {
-                        this._lastPdfPath = pdfPath;
-                        this._currentMode = 'pdf';
-                        this.update();
-                    }
-                    break;
-                case 'switchMode':
-                    this._currentMode = message.mode;
-                    this.update();
                     break;
                 case 'openSettings':
                     vscode.commands.executeCommand('workbench.action.openSettings', 'md2pdf');
@@ -75,14 +67,14 @@ export class PreviewPanel {
             }
         }, null, this._disposables);
 
-        // 监听文档修改实时刷新即时预览
+        // 监听文档编辑实时刷新
         vscode.workspace.onDidChangeTextDocument((e) => {
-            if (e.document.uri.fsPath === this._documentUri.fsPath && this._currentMode === 'interactive') {
+            if (e.document.uri.fsPath === this._documentUri.fsPath) {
                 this.update();
             }
         }, null, this._disposables);
 
-        // 监听活动编辑器变更
+        // 监听活动文档切换
         vscode.window.onDidChangeActiveTextEditor((editor) => {
             if (editor && editor.document.languageId === 'markdown') {
                 this._documentUri = editor.document.uri;
@@ -103,40 +95,67 @@ export class PreviewPanel {
             const openDoc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === this._documentUri.fsPath);
             rawContent = openDoc ? openDoc.getText() : fs.readFileSync(this._documentUri.fsPath, 'utf-8');
         } catch (e) {
-            rawContent = '# 读取文件出错\n请确保文件存在。';
+            rawContent = '# 读取文件失败\n请确认文件存在。';
         }
 
         const safeTitle = path.basename(this._documentUri.fsPath);
 
-        // 图片路径处理：将相对路径图片转为 webview 协议地址
-        const processedMd = rawContent.replace(/!\[(.*?)\]\((.*?)\)/g, (match, alt, imgPath) => {
-            let cleanPath = imgPath.trim();
-            if (cleanPath.startsWith('http://') || cleanPath.startsWith('https://') || cleanPath.startsWith('data:')) {
-                return match;
-            }
-            try {
-                const absPath = path.isAbsolute(cleanPath) ? cleanPath : path.resolve(docDir, cleanPath);
-                if (fs.existsSync(absPath)) {
-                    const webviewUri = this._panel.webview.asWebviewUri(vscode.Uri.file(absPath));
-                    return `![${alt}](${webviewUri.toString()})`;
+        // 初始化 Markdown 渲染器（采用微软官方 VS Code 同款底层 markdown-it-katex）
+        const md: any = new MarkdownIt({
+            html: true,
+            linkify: true,
+            typographer: true,
+            breaks: true,
+            highlight: (str: string, lang: string): string => {
+                if (lang && hljs.getLanguage(lang)) {
+                    try {
+                        return `<pre class="hljs"><code>${hljs.highlight(str, { language: lang, ignoreIllegals: true }).value}</code></pre>`;
+                    } catch (__) {}
                 }
-            } catch (e) {
-                // 忽略转换失败
+                try {
+                    return `<pre class="hljs"><code>${hljs.highlightAuto(str).value}</code></pre>`;
+                } catch (__) {}
+                return `<pre class="hljs"><code>${md.utils.escapeHtml(str)}</code></pre>`;
             }
-            return match;
         });
 
-        // 准备 pdf 视图数据
-        let pdfWebviewUriStr = '';
-        if (this._lastPdfPath && fs.existsSync(this._lastPdfPath)) {
-            pdfWebviewUriStr = this._panel.webview.asWebviewUri(vscode.Uri.file(this._lastPdfPath)).toString();
-        } else {
-            const autoPdf = path.join(docDir, `${path.parse(this._documentUri.fsPath).name}.pdf`);
-            if (fs.existsSync(autoPdf)) {
-                this._lastPdfPath = autoPdf;
-                pdfWebviewUriStr = this._panel.webview.asWebviewUri(vscode.Uri.file(autoPdf)).toString();
+        // 加载微软官方同款 KaTeX 数学插件
+        md.use(markdownItKatex, {
+            throwOnError: false,
+            errorColor: '#cc0000'
+        });
+
+        // 拦截并重写图片相对路径为安全 Webview URI
+        const defaultImageRenderer = md.renderer.rules.image || function (tokens: any[], idx: number, options: any, env: any, self: any): string {
+            return self.renderToken(tokens, idx, options);
+        };
+        md.renderer.rules.image = (tokens: any[], idx: number, options: any, env: any, self: any): string => {
+            const token = tokens[idx];
+            const srcIdx = token.attrIndex('src');
+            if (srcIdx >= 0) {
+                const src = token.attrs[srcIdx][1];
+                if (!src.startsWith('http://') && !src.startsWith('https://') && !src.startsWith('data:')) {
+                    try {
+                        const absPath = path.isAbsolute(src) ? src : path.resolve(docDir, src);
+                        if (fs.existsSync(absPath)) {
+                            token.attrs[srcIdx][1] = this._panel.webview.asWebviewUri(vscode.Uri.file(absPath)).toString();
+                        }
+                    } catch (e) {}
+                }
             }
-        }
+            return defaultImageRenderer(tokens, idx, options, env, self);
+        };
+
+        // 在 Node.js 宿主直接编译 Markdown 为 HTML
+        const renderedBodyHtml = md.render(rawContent);
+
+        // 本地静态 CSS 路径转换（确保相对路径的 fonts/* 字体能被 Webview 安全加载）
+        const katexCssUri = this._panel.webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'katex', 'katex.min.css')
+        );
+        const hljsCssUri = this._panel.webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'highlight', 'atom-one-dark.min.css')
+        );
 
         return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -144,22 +163,21 @@ export class PreviewPanel {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MD2PDF 预览</title>
-    <!-- KaTeX 支持 LaTeX 公式渲染 -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
-    <!-- Marked 支持 Markdown 快速解析 -->
-    <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+    <!-- 本地 KaTeX 官方完整样式与字体关联 -->
+    <link rel="stylesheet" href="${katexCssUri}">
+    <!-- 本地代码高亮样式 -->
+    <link rel="stylesheet" href="${hljsCssUri}">
     <style>
         :root {
             --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+            --code-font: Consolas, "Cascadia Code", "Fira Code", Menlo, Monaco, "Courier New", monospace;
         }
         body {
             font-family: var(--font-family);
             padding: 0;
             margin: 0;
-            background-color: var(--vscode-editor-background);
-            color: var(--vscode-editor-foreground);
+            background-color: var(--vscode-editor-background, #1e1e1e);
+            color: var(--vscode-editor-foreground, #d4d4d4);
             display: flex;
             flex-direction: column;
             height: 100vh;
@@ -172,24 +190,26 @@ export class PreviewPanel {
             padding: 8px 16px;
             background-color: var(--vscode-editorGroupHeader-tabsBackground, #252526);
             border-bottom: 1px solid var(--vscode-panel-border, #333);
-            font-size: 12px;
+            font-size: 13px;
             user-select: none;
+            flex-shrink: 0;
         }
         .btn-group {
             display: flex;
-            gap: 8px;
+            gap: 10px;
         }
         button {
             background-color: var(--vscode-button-secondaryBackground, #3a3d41);
             color: var(--vscode-button-secondaryForeground, #fff);
             border: 1px solid var(--vscode-button-border, transparent);
-            padding: 4px 10px;
+            padding: 5px 14px;
             font-size: 12px;
             cursor: pointer;
             border-radius: 3px;
             display: inline-flex;
             align-items: center;
-            gap: 4px;
+            font-weight: 500;
+            transition: all 0.15s ease;
         }
         button:hover {
             background-color: var(--vscode-button-secondaryHoverBackground, #45494e);
@@ -201,70 +221,73 @@ export class PreviewPanel {
         button.primary:hover {
             background-color: var(--vscode-button-hoverBackground, #0062a3);
         }
-        button.active {
-            outline: 2px solid var(--vscode-focusBorder, #007fd4);
-            font-weight: bold;
-        }
         .status-msg {
             color: var(--vscode-descriptionForeground, #aaa);
-            font-style: italic;
+            font-size: 12px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 320px;
         }
         .content-container {
             flex: 1;
             overflow-y: auto;
             padding: 24px 36px;
             box-sizing: border-box;
-            line-height: 1.68;
+            line-height: 1.72;
         }
-        .pdf-container {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-        }
-        iframe {
-            width: 100%;
-            height: 100%;
-            border: none;
-        }
-        /* Markdown 美化排版 */
         h1, h2, h3, h4, h5, h6 {
-            color: var(--vscode-editor-foreground);
-            margin-top: 1.2em;
+            color: var(--vscode-editor-foreground, #f0f0f0);
+            margin-top: 1.3em;
             margin-bottom: 0.6em;
             font-weight: 600;
         }
         h1 { font-size: 1.8em; border-bottom: 1px solid var(--vscode-panel-border, #444); padding-bottom: 0.3em; }
         h2 { font-size: 1.4em; border-bottom: 1px solid var(--vscode-panel-border, #333); padding-bottom: 0.2em; }
-        code {
-            font-family: Consolas, "Courier New", monospace;
-            background-color: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.15));
-            padding: 2px 5px;
-            border-radius: 3px;
+        
+        p code, li code, td code {
+            font-family: var(--code-font);
+            background-color: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.18));
+            color: #e06c75;
+            padding: 2px 6px;
+            border-radius: 4px;
             font-size: 0.9em;
         }
-        pre {
-            background-color: var(--vscode-textCodeBlock-background, rgba(127,127,127,0.12));
-            padding: 12px 16px;
+        pre.hljs {
+            background-color: #282c34 !important;
             border-radius: 6px;
+            padding: 14px 18px;
             overflow-x: auto;
-            border: 1px solid var(--vscode-panel-border, #333);
+            border: 1px solid var(--vscode-panel-border, #3e4451);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            margin: 1.2em 0;
         }
-        pre code {
-            padding: 0;
-            background: none;
-            white-space: pre-wrap;
-            word-break: break-all;
+        pre.hljs code {
+            background: transparent !important;
+            padding: 0 !important;
+            font-family: var(--code-font);
+            font-size: 13.5px;
+            line-height: 1.55;
+            white-space: pre;
+            word-break: normal;
+        }
+        .katex-display {
+            margin: 1.6em 0 !important;
+            overflow-x: auto;
+            overflow-y: hidden;
+            padding: 10px 0;
+        }
+        .katex {
+            font-size: 1.18em;
         }
         img {
             max-width: 100%;
             height: auto;
             display: block;
-            margin: 16px auto;
+            margin: 18px auto;
             border-radius: 4px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+            border: 1px solid var(--vscode-panel-border, #333);
         }
         blockquote {
             border-left: 4px solid var(--vscode-button-background, #007acc);
@@ -272,11 +295,12 @@ export class PreviewPanel {
             padding: 0.5em 1em;
             color: var(--vscode-descriptionForeground, #888);
             background-color: rgba(127,127,127,0.08);
+            border-radius: 0 4px 4px 0;
         }
         table {
             border-collapse: collapse;
             width: 100%;
-            margin: 16px 0;
+            margin: 18px 0;
         }
         th, td {
             border: 1px solid var(--vscode-panel-border, #444);
@@ -286,90 +310,36 @@ export class PreviewPanel {
         th {
             background-color: rgba(127,127,127,0.15);
         }
-        .empty-pdf-tip {
-            margin: 40px auto;
-            text-align: center;
-            color: var(--vscode-descriptionForeground, #888);
-        }
     </style>
 </head>
 <body>
     <div class="toolbar">
         <div class="btn-group">
-            <button id="btnInteractive" class="${this._currentMode === 'interactive' ? 'active' : ''}" onclick="switchMode('interactive')">⚡ 即时渲染预览</button>
-            <button id="btnPdf" class="${this._currentMode === 'pdf' ? 'active' : ''}" onclick="switchMode('pdf')">📄 真机 PDF 视图</button>
+            <button class="primary" id="btnRender">实时渲染</button>
+            <button id="btnExport">导出PDF</button>
+            <button id="btnSettings">设置</button>
         </div>
-        <span id="statusSpan" class="status-msg">${safeTitle}</span>
-        <div class="btn-group">
-            <button onclick="compilePdf()">🔄 编译真机 PDF</button>
-            <button class="primary" onclick="exportPdf()">💾 导出 PDF</button>
-            <button onclick="openSettings()">⚙️ 设置</button>
-        </div>
+        <span class="status-msg">${safeTitle}</span>
     </div>
 
-    ${this._currentMode === 'interactive' ? `
-        <div class="content-container" id="markdownContainer"></div>
-    ` : `
-        <div class="pdf-container">
-            ${pdfWebviewUriStr ? `
-                <iframe src="${pdfWebviewUriStr}#toolbar=0&navpanes=0"></iframe>
-            ` : `
-                <div class="empty-pdf-tip">
-                    <p>尚未生成当前文档的 PDF 编译文件。</p>
-                    <button class="primary" onclick="compilePdf()">立即调用 Pandoc + XeLaTeX 编译</button>
-                </div>
-            `}
-        </div>
-    `}
+    <div class="content-container">
+        ${renderedBodyHtml}
+    </div>
 
     <script>
         const vscode = acquireVsCodeApi();
-        const rawMarkdown = ${JSON.stringify(processedMd)};
 
-        function switchMode(mode) {
-            vscode.postMessage({ command: 'switchMode', mode: mode });
-        }
-
-        function exportPdf() {
-            vscode.postMessage({ command: 'exportPdf' });
-        }
-
-        function compilePdf() {
-            const span = document.getElementById('statusSpan');
-            if (span) span.innerText = '正在调用 Pandoc 编译真实 PDF...';
-            vscode.postMessage({ command: 'compileAndShowPdf' });
-        }
-
-        function openSettings() {
-            vscode.postMessage({ command: 'openSettings' });
-        }
-
-        window.addEventListener('message', event => {
-            const message = event.data;
-            if (message.type === 'status') {
-                const span = document.getElementById('statusSpan');
-                if (span) span.innerText = message.text;
-            }
+        document.getElementById('btnRender').addEventListener('click', () => {
+            vscode.postMessage({ command: 'render' });
         });
 
-        // 渲染 Markdown
-        const container = document.getElementById('markdownContainer');
-        if (container && typeof marked !== 'undefined') {
-            container.innerHTML = marked.parse(rawMarkdown);
+        document.getElementById('btnExport').addEventListener('click', () => {
+            vscode.postMessage({ command: 'exportPdf' });
+        });
 
-            // 渲染 LaTeX 公式 (KaTeX)
-            if (typeof renderMathInElement !== 'undefined') {
-                renderMathInElement(container, {
-                    delimiters: [
-                        {left: '$$', right: '$$', display: true},
-                        {left: '$', right: '$', display: false},
-                        {left: '\\(', right: '\\)', display: false},
-                        {left: '\\[', right: '\\]', display: true}
-                    ],
-                    throwOnError: false
-                });
-            }
-        }
+        document.getElementById('btnSettings').addEventListener('click', () => {
+            vscode.postMessage({ command: 'openSettings' });
+        });
     </script>
 </body>
 </html>`;

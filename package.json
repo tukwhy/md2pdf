@@ -21,7 +21,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package --no-dependencies"
+    "package": "vsce package"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
@@ -139,5 +139,11 @@
         }
       }
     }
+  },
+  "dependencies": {
+    "@iktakahiro/markdown-it-katex": "^4.0.1",
+    "highlight.js": "^11.12.0",
+    "katex": "^0.16.47",
+    "markdown-it": "^14.3.2"
   }
 }

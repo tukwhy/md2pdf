@@ -1,8 +1,11 @@
-﻿import * as vscode from 'vscode';
+import * as vscode from 'vscode';
 import { Exporter } from './exporter';
 import { PreviewPanel } from './previewPanel';
 
 export function activate(context: vscode.ExtensionContext) {
+    // 注入插件安装路径，方便查找内置模板
+    Exporter.extensionPath = context.extensionPath;
+
     // 注册导出 PDF 命令
     const exportCmd = vscode.commands.registerCommand('md2pdf.export', async (uri?: vscode.Uri) => {
         await Exporter.exportPdf(uri);
